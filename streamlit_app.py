@@ -1,251 +1,235 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import norm
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from functions import (
+    OptionSpec, bs_price, bs_greeks, binomial_price, 
+    lsm_american_price, binomial_greeks, lsm_greeks
+)
 
-# Configuración
-st.set_page_config(page_title="Modelos de Opciones", layout="wide")
-st.title("Modelos de Valoración de Opciones")
+# Configuración de la página
+st.set_page_config(
+    page_title="Analizador Avanzado de Opciones",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# Sidebar (igual que antes)
+# Título principal
+st.title("📊 Analizador Avanzado de Opciones Financieras")
+st.markdown("""
+Esta aplicación calcula precios y griegas de opciones usando diferentes métodos de valuación:
+- **Black-Scholes** para opciones europeas
+- **Modelo Binomial** para opciones europeas y americanas
+- **Longstaff-Schwartz (Monte Carlo)** para opciones americanas
+""")
+
+# Barra lateral para parámetros
 with st.sidebar:
-    st.title("Pricing Model")
-    model = st.selectbox("Model", ["Black-Scholes (European)", "Binomial", "Longstaff-Schwartz (American)"])
-    current_price = st.number_input("Asset Price (S₀)", value=100.0)
-    strike_price = st.number_input("Strike Price (K)", value=100.0)
-    time_to_maturity = st.number_input("Time to Maturity - Years (T)", value=1.0)
-    volatility = st.number_input("Volatility (σ)", value=0.2)
-    risk_free_rate = st.number_input("Risk-Free Rate (r)", value=0.05)
+    st.header("📋 Parámetros de la Opción")
     
-    if model == "Longstaff-Schwartz (American)":
-        simulations = st.number_input("Simulations", min_value=100, value=10000, step=100)
-        steps = st.number_input("Number of Steps", min_value=10, value=50, step=10)
-    elif model == "Binomial":
-        exercise = st.selectbox("Exercise Type", ["european", "american"])
-        steps = st.number_input("Number of Steps", min_value=10, value=50, step=10)
-
-
-# Funciones de valoración (las mismas que tenías)
-def black_scholes(S, K, T, r, sigma):
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    d2 = d1 - sigma * np.sqrt(T)
-    call_price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
-    put_price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
-    return call_price, put_price
-
-def binomial_model(S, K, T, r, sigma, steps, exercise='european'):
-    dt = T / steps
-    u = np.exp(sigma * np.sqrt(dt))
-    d = 1 / u
-    p = (np.exp(r * dt) - d) / (u - d)
-    disc = np.exp(-r * dt)
-
-    ST = np.array([S * u**j * d**(steps - j) for j in range(steps + 1)])
-
-    call = np.maximum(0, ST - K)
-    put = np.maximum(0, K - ST)
-
-    for i in range(steps - 1, -1, -1):
-        call = disc * (p * call[1:] + (1 - p) * call[:-1])
-        put = disc * (p * put[1:] + (1 - p) * put[:-1])
-
-        if exercise == 'american':
-            ST = ST[:i+1] / u
-            call = np.maximum(call, ST - K)
-            put = np.maximum(put, K - ST)
-
-    return call[0], put[0], ST
-
-def longstaff_schwartz_american_option(S0, K, r, sigma, T, M=50, N=10000, option_type='put'):
-    dt = T / M
-    discount = np.exp(-r * dt)
+    # Inputs básicos
+    col1, col2 = st.columns(2)
+    with col1:
+        S = st.number_input("Precio Spot (S)", value=100.0, min_value=0.01, step=1.0)
+        K = st.number_input("Precio Ejercicio (K)", value=100.0, min_value=0.01, step=1.0)
+        T = st.number_input("Tiempo (T años)", value=0.25, min_value=0.0, max_value=50.0, step=0.05)
     
-    # Simulación de trayectorias
-    S = np.zeros((N, M + 1))
-    S[:, 0] = S0
-    for t in range(1, M + 1):
-        Z = np.random.normal(0, 1, N)
-        S[:, t] = S[:, t - 1] * np.exp((r - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z)
+    with col2:
+        r = st.number_input("Tasa Libre Riesgo (r)", value=0.05, min_value=0.0, max_value=1.0, step=0.01)
+        q = st.number_input("Dividend Yield (q)", value=0.0, min_value=0.0, max_value=1.0, step=0.01)
+        sigma = st.number_input("Volatilidad (σ)", value=0.2, min_value=0.01, max_value=2.0, step=0.01)
     
-    if option_type == 'put':
-        h = np.maximum(K - S, 0)
-    else:
-        h = np.maximum(S - K, 0)
+    # Selectores adicionales
+    option_type = st.radio("Tipo de opción", ["Call", "Put"])
+    is_call = option_type == "Call"
     
-    V = h[:, -1].copy()
-    for t in range(M - 1, 0, -1):
-        itm = h[:, t] > 0
-        X = S[itm, t]
-        Y = V[itm] * discount
-        
-        if len(X) > 0:
-            A = np.vstack([np.ones_like(X), X, X**2]).T
-            coeffs = np.linalg.lstsq(A, Y, rcond=None)[0]
-            continuation = coeffs[0] + coeffs[1] * X + coeffs[2] * X**2
-            exercise = h[itm, t]
-            V[itm] = np.where(exercise > continuation, exercise, V[itm] * discount)
+    st.divider()
+    st.subheader("⚙️ Configuración de Métodos")
     
-    return discount * np.mean(V)
+    # Configuración para Binomial
+    st.markdown("**Método Binomial**")
+    binomial_steps = st.slider("Número de pasos", 10, 500, 100, 10)
+    american_enabled = st.checkbox("Habilitar ejercicio americano")
+    
+    # Configuración para LSM
+    st.markdown("**Método LSM (Monte Carlo)**")
+    lsm_paths = st.slider("Número de paths", 1000, 200000, 10000, 1000)
+    lsm_steps = st.slider("Número de steps", 10, 200, 50, 10)
+    lsm_degree = st.slider("Grado polinomial", 1, 5, 2)
 
-# Función para generar superficies 3D (compatible con todos los modelos)
-def plot_option_surface(model_type, S0, K, T, r, sigma, steps=50, simulations=10000, exercise='european'):
-    S = np.linspace(max(S0 * 0.5, 1), S0 * 1.5, 50)  # Precios entre 50% y 150% de S0 (mínimo 1)
-    volatility_range = np.linspace(0.1, 1, 50)  # Volatilidad entre 10% y 100%
+# Crear especificación de la opción
+spec = OptionSpec(S=S, K=K, T=T, r=r, q=q, sigma=sigma, is_call=is_call)
+
+# Calcular precios con diferentes métodos
+try:
+    # Black-Scholes
+    bs_result = bs_greeks(spec)
+    bs_price_val = bs_result["price"]
     
-    call_prices = np.zeros((len(S), len(volatility_range)))
-    put_prices = np.zeros((len(S), len(volatility_range)))
+    # Binomial
+    binomial_price_val = binomial_price(spec, steps=binomial_steps, american=american_enabled)
     
-    for i, s in enumerate(S):
-        for j, vol in enumerate(volatility_range):
-            try:
-                if model_type == "Black-Scholes":
-                    call, put = black_scholes(s, K, T, r, vol)
-                elif model_type == "Binomial":
-                    call, put, _ = binomial_model(s, K, T, r, vol, steps, exercise)
-                elif model_type == "Longstaff-Schwartz":
-                    call = longstaff_schwartz_american_option(s, K, r, vol, T, steps, simulations, 'call')
-                    put = longstaff_schwartz_american_option(s, K, r, vol, T, steps, simulations, 'put')
-                
-                call_prices[i, j] = call
-                put_prices[i, j] = put
-            except:
-                call_prices[i, j] = np.nan
-                put_prices[i, j] = np.nan
-    
-    # Gráfico Call
-    fig_call = go.Figure(go.Surface(
-        z=call_prices, 
-        x=S, 
-        y=volatility_range, 
-        colorscale='Viridis',
-        contours={
-            "x": {"show": True, "color":"grey"},
-            "y": {"show": True, "color":"grey"}
-        }
-    ))
-    fig_call.update_layout(
-        title=f'Call Option ({model_type})',
-        scene=dict(
-            xaxis_title='Spot Price',
-            yaxis_title='Volatility',
-            zaxis_title='Price',
-            camera={"eye": {"x": 1.2, "y": 2, "z": 0.2}}
-        ),
-        margin={"r": 20, "l": 10, "b": 10}
+    # LSM (solo para opciones americanas)
+    lsm_price_val = lsm_american_price(
+        spec, 
+        n_paths=lsm_paths, 
+        n_steps=lsm_steps, 
+        degree=lsm_degree
     )
     
-    # Gráfico Put
-    fig_put = go.Figure(go.Surface(
-        z=put_prices, 
-        x=S, 
-        y=volatility_range,
-        colorscale='Plasma',
-        contours={
-            "x": {"show": True, "color":"grey"},
-            "y": {"show": True, "color":"grey"}
-        }
-    ))
-    fig_put.update_layout(
-        title=f'Put Option ({model_type})',
-        scene=dict(
-            xaxis_title='Spot Price',
-            yaxis_title='Volatility',
-            zaxis_title='Price',
-            camera={"eye": {"x": 2, "y": 2, "z": 2}}
-        ),
-        margin={"r": 20, "l": 10, "b": 10}
+    # Calcular griegas para Binomial y LSM
+    binomial_greeks_val = binomial_greeks(spec, steps=binomial_steps, american=american_enabled)
+    lsm_greeks_val = lsm_greeks(
+        spec, 
+        n_paths=lsm_paths, 
+        n_steps=lsm_steps, 
+        degree=lsm_degree
     )
     
-    return fig_call, fig_put
+except Exception as e:
+    st.error(f"Error en cálculo: {e}")
+    st.stop()
 
-# Resultados para todos los modelos
-if model == "Black-Scholes (European)":
-    call, put = black_scholes(current_price, strike_price, time_to_maturity, risk_free_rate, volatility)
-    
-    # Primera fila: Precios
-    st.subheader("Resultados")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Precio Call Europea", f"{call:.2f}")
-    with col2:
-        st.metric("Precio Put Europea", f"{put:.2f}")
-    
-    # Segunda fila: Superficies
-    st.subheader("Superficies de Valoración")
-    fig_call, fig_put = plot_option_surface("Black-Scholes", current_price, strike_price, time_to_maturity, risk_free_rate, volatility)
-    col1, col2 = st.columns(2)
-    with col1:
-        st.plotly_chart(fig_call, use_container_width=True)
-    with col2:
-        st.plotly_chart(fig_put, use_container_width=True)
+# Mostrar resultados
+st.header("📈 Resultados de Valuación")
 
-elif model == "Binomial":
-    call, put, ST = binomial_model(current_price, strike_price, time_to_maturity, risk_free_rate, volatility, int(steps), exercise)
-    
-    # Primera fila: Precios
-    st.subheader("Resultados")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric(f"Precio Call ({exercise.capitalize()})", f"{call:.2f}")
-    with col2:
-        st.metric(f"Precio Put ({exercise.capitalize()})", f"{put:.2f}")
-    
-    # Segunda fila: Superficies
-    st.subheader("Superficies de Valoración")
-    fig_call, fig_put = plot_option_surface("Binomial", current_price, strike_price, time_to_maturity, risk_free_rate, volatility, int(steps))
-    col1, col2 = st.columns(2)
-    with col1:
-        st.plotly_chart(fig_call, use_container_width=True)
-    with col2:
-        st.plotly_chart(fig_put, use_container_width=True)
-    
-    # Tercera fila: Trayectorias (opcional)
-    st.subheader("Trayectorias Binomiales")
-    plt.figure(figsize=(10, 4))
-    plt.plot(ST, 'o-', alpha=0.5)
-    plt.title("Evolución del Precio en el Árbol Binomial")
-    st.pyplot(plt)
+# Métricas de precios
+col1, col2, col3 = st.columns(3)
+col1.metric("Black-Scholes", f"${bs_price_val:.4f}")
+col2.metric(f"Binomial {'(Americano)' if american_enabled else '(Europeo)'}", f"${binomial_price_val:.4f}")
+col3.metric("LSM (Americano)", f"${lsm_price_val:.4f}")
 
-elif model == "Longstaff-Schwartz (American)":
-    call = longstaff_schwartz_american_option(current_price, strike_price, risk_free_rate, volatility, time_to_maturity, int(steps), int(simulations), 'call')
-    put = longstaff_schwartz_american_option(current_price, strike_price, risk_free_rate, volatility, time_to_maturity, int(steps), int(simulations), 'put')
-    
-    # Primera fila: Precios
-    st.subheader("Resultados")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Precio Call Americana", f"{call:.2f}")
-    with col2:
-        st.metric("Precio Put Americana", f"{put:.2f}")
-    
-    # Segunda fila: Superficies
-    st.subheader("Superficies de Valoración")
-    fig_call, fig_put = plot_option_surface("Longstaff-Schwartz", current_price, strike_price, time_to_maturity, risk_free_rate, volatility, int(steps), int(simulations))
-    col1, col2 = st.columns(2)
-    with col1:
-        st.plotly_chart(fig_call, use_container_width=True)
-    with col2:
-        st.plotly_chart(fig_put, use_container_width=True)
-    
-    # Tercera fila: Simulaciones (opcional)
-    st.subheader("Trayectorias Simuladas")
-    np.random.seed(42)
-    M = int(steps)
-    N = 100
-    S_sim = np.zeros((N, M + 1))
-    S_sim[:, 0] = current_price
-    for t in range(1, M + 1):
-        Z = np.random.normal(0, 1, N)
-        S_sim[:, t] = S_sim[:, t - 1] * np.exp((risk_free_rate - 0.5 * volatility**2) * (time_to_maturity/M) + volatility * np.sqrt(time_to_maturity/M) * Z)
-    
-    plt.figure(figsize=(10, 4))
-    for i in range(N):
-        plt.plot(S_sim[i], alpha=0.3)
-    plt.axhline(strike_price, color='r', linestyle='--', label='Strike Price')
-    plt.title("Simulaciones de Monte Carlo")
-    st.pyplot(plt)
+# Mostrar diferencias
+col1, col2 = st.columns(2)
+diff_bs_bin = abs(bs_price_val - binomial_price_val) / bs_price_val * 100
+diff_bs_lsm = abs(bs_price_val - lsm_price_val) / bs_price_val * 100
 
-st.markdown("---")
-st.markdown("Creado por José Cotrina Lejabo | LinkedIn próximamente")
+col1.metric("Diff BS-Binomial", f"{diff_bs_bin:.2f}%")
+col2.metric("Diff BS-LSM", f"{diff_bs_lsm:.2f}%")
+
+# Mostrar griegas
+st.subheader("📊 Greeks Comparativos")
+
+greeks_data = {
+    "Greek": ["Delta", "Gamma", "Vega", "Theta", "Rho"],
+    "Black-Scholes": [
+        bs_result["delta"],
+        bs_result["gamma"],
+        bs_result["vega"],
+        bs_result["theta"],
+        bs_result["rho"]
+    ],
+    "Binomial": [
+        binomial_greeks_val["delta"],
+        binomial_greeks_val["gamma"],
+        binomial_greeks_val["vega"],
+        binomial_greeks_val["theta"],
+        binomial_greeks_val["rho"]
+    ],
+    "LSM": [
+        lsm_greeks_val["delta"],
+        lsm_greeks_val["gamma"],
+        lsm_greeks_val["vega"],
+        lsm_greeks_val["theta"],
+        lsm_greeks_val["rho"]
+    ]
+}
+
+# Mostrar tabla de griegas
+st.dataframe(greeks_data, use_container_width=True)
+
+# Análisis de sensibilidad
+st.header("🔍 Análisis de Sensibilidad")
+
+# Selector de parámetro para análisis
+param = st.selectbox("Parámetro para análisis", ["S", "K", "T", "r", "q", "sigma"])
+
+# Rango de valores
+if param == "S":
+    default_range = (S * 0.5, S * 1.5)
+    values = np.linspace(S * 0.5, S * 1.5, 50)
+elif param == "K":
+    default_range = (K * 0.5, K * 1.5)
+    values = np.linspace(K * 0.5, K * 1.5, 50)
+elif param == "T":
+    default_range = (0.01, T * 2)
+    values = np.linspace(0.01, max(0.5, T * 2), 50)
+elif param == "r":
+    default_range = (0.0, 0.1)
+    values = np.linspace(0.0, 0.1, 50)
+elif param == "q":
+    default_range = (0.0, 0.1)
+    values = np.linspace(0.0, 0.1, 50)
+elif param == "sigma":
+    default_range = (0.05, 0.5)
+    values = np.linspace(0.05, 0.5, 50)
+
+# Calcular precios para diferentes valores del parámetro
+bs_prices = []
+binomial_prices = []
+lsm_prices = []
+
+for val in values:
+    # Crear nueva especificación con el parámetro modificado
+    if param == "S":
+        new_spec = OptionSpec(S=val, K=K, T=T, r=r, q=q, sigma=sigma, is_call=is_call)
+    elif param == "K":
+        new_spec = OptionSpec(S=S, K=val, T=T, r=r, q=q, sigma=sigma, is_call=is_call)
+    elif param == "T":
+        new_spec = OptionSpec(S=S, K=K, T=val, r=r, q=q, sigma=sigma, is_call=is_call)
+    elif param == "r":
+        new_spec = OptionSpec(S=S, K=K, T=T, r=val, q=q, sigma=sigma, is_call=is_call)
+    elif param == "q":
+        new_spec = OptionSpec(S=S, K=K, T=T, r=r, q=val, sigma=sigma, is_call=is_call)
+    elif param == "sigma":
+        new_spec = OptionSpec(S=S, K=K, T=T, r=r, q=q, sigma=val, is_call=is_call)
+    
+    # Calcular precios
+    bs_prices.append(bs_price(new_spec))
+    binomial_prices.append(binomial_price(new_spec, steps=binomial_steps, american=american_enabled))
+    lsm_prices.append(lsm_american_price(
+        new_spec, 
+        n_paths=lsm_paths, 
+        n_steps=lsm_steps, 
+        degree=lsm_degree
+    ))
+
+# Crear gráfico
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.plot(values, bs_prices, label='Black-Scholes', linewidth=2)
+ax.plot(values, binomial_prices, label=f'Binomial ({"" if american_enabled else "Europeo"})', linewidth=2)
+ax.plot(values, lsm_prices, label='LSM (Americano)', linewidth=2)
+
+ax.set_xlabel(param)
+ax.set_ylabel('Precio de la opción')
+ax.set_title(f'Sensibilidad del precio a {param}')
+ax.legend()
+ax.grid(True, alpha=0.3)
+
+st.pyplot(fig)
+
+# Información adicional
+with st.expander("💡 Información sobre los métodos de valuación"):
+    st.markdown("""
+    **Black-Scholes**:
+    - Modelo analítico para opciones europeas
+    - Proporciona griegas exactas
+    - No considera ejercicio anticipado
+    
+    **Modelo Binomial**:
+    - Aproximación discreta del precio
+    - Puede manejar opciones americanas (ejercicio anticipado)
+    - Más preciso con más steps
+    
+    **Longstaff-Schwartz (LSM)**:
+    - Método de Monte Carlo para opciones americanas
+    - Usa regresión para estimar el valor de continuación
+    - Computacionalmente intensivo pero muy flexible
+    """)
+
+# Notas al pie
+st.divider()
+st.caption("""
+*Nota: Esta aplicación es para fines educativos y de análisis. 
+Los resultados no deben considerarse como recomendaciones de inversión.*
+""")
