@@ -43,7 +43,7 @@ with st.sidebar:
     st.header("⚙️ Parámetros Específicos")
 
     if modelo == "Black-Scholes":
-    q = st.number_input("Dividend Yield (q)", value=0.0, min_value=0.0, max_value=1.0, step=0.01)  
+        q = st.number_input("Dividend Yield (q)", value=0.0, min_value=0.0, max_value=1.0, step=0.01)  
 
     elif modelo == "Binomial":
         q = st.number_input("Dividend Yield (q)", value=0.0, min_value=0.0, max_value=1.0, step=0.01)
