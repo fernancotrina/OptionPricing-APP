@@ -41,9 +41,11 @@ with st.sidebar:
     # Parámetros específicos por modelo
     st.divider()
     st.header("⚙️ Parámetros Específicos")
-    
 
-    if modelo == "Binomial":
+    if modelo == "Black-Scholes":
+    q = st.number_input("Dividend Yield (q)", value=0.0, min_value=0.0, max_value=1.0, step=0.01)  
+
+    elif modelo == "Binomial":
         q = st.number_input("Dividend Yield (q)", value=0.0, min_value=0.0, max_value=1.0, step=0.01)
         binomial_steps = st.slider("Número de pasos", 10, 500, 100, 10)
         ejercicio = st.radio("Tipo de ejercicio", ["Europeo", "Americano"])
