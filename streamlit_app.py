@@ -238,7 +238,7 @@ elif modelo == "Binomial":
         """)
 
     # Tipo de Ejercicio - Americana por defecto
-    is_american = st.toggle("Estilo Americano (Ejercicio Temprano)", value=True)
+    is_american = st.toggle("Estilo Americano", value=True)
     
     try:
         # Calcular precios y griegas
